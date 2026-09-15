@@ -1,0 +1,224 @@
+// ==============================================================================
+// KELAS 1: FUNDAMENTAL ANALISIS SPASIAL DAN PEMANTAUAN KARHUTLA
+// STUDI KASUS: KALIMANTAN TENGAH (AGUSTUS 2026)
+// ==============================================================================
+
+// ==============================================================================
+// SESI 1: PENGENALAN GEE & PERSIAPAN DATA KEBAKARAN
+// ==============================================================================
+
+// 1. Menyiapkan Wilayah Studi (Region of Interest)
+var roi = ee.FeatureCollection('projects/pelatihan-geemap/assets/Kalimantan_Tengah_ADMIN_BPS');
+
+Map.centerObject(roi, 7);
+Map.setOptions('HYBRID');
+
+// Batas wilayah Kalteng
+var outline = ee.Image().byte().paint({
+  featureCollection: roi,
+  color: 1,
+  width: 2
+});
+
+Map.addLayer(
+  outline,
+  {palette: 'white'},
+  'Batas Wilayah Kalteng',
+  true
+);
+
+
+// ==============================================================================
+// 2. DATA FIRMS NASA
+// ==============================================================================
+
+// Mengambil data FIRMS selama Agustus 2026
+// Catatan:
+// filterDate tanggal akhir bersifat EXCLUSIVE,
+// sehingga digunakan 2026-09-01 agar seluruh Agustus masuk.
+
+var firms2026 = ee.ImageCollection('FIRMS')
+  .filterBounds(roi)
+  .filterDate('2026-08-01', '2026-09-01')
+  .select('T21');
+
+
+// Menampilkan jumlah citra FIRMS yang digunakan
+print(
+  'Jumlah citra FIRMS Agustus 2026:',
+  firms2026.size()
+);
+
+
+// ==============================================================================
+// 3. VISUALISASI TITIK API
+// ==============================================================================
+
+// Mengambil nilai maksimum selama periode Agustus
+var hotspots = firms2026.max().clip(roi);
+
+var visFirms = {
+  min: 300,
+  max: 400,
+  palette: ['red', 'orange', 'yellow']
+};
+
+Map.addLayer(
+  hotspots,
+  visFirms,
+  'Sesi 1: Titik Api FIRMS - Agustus 2026',
+  true
+);
+
+
+// ==============================================================================
+// SESI 2: ESTIMASI LUAS AREA TERDETEKSI API
+// ==============================================================================
+
+
+// 4. Membuat binary fire mask
+//
+// 1 = piksel terdeteksi memiliki aktivitas api
+// 0 = tidak terdeteksi api
+
+var fireMask = hotspots.gt(0).rename('Fire_Mask');
+
+Map.addLayer(
+  fireMask.selfMask(),
+  {palette: ['red']},
+  'Area Terdeteksi Api',
+  false
+);
+
+
+// ==============================================================================
+// 5. MENGHITUNG LUAS AREA TERDETEKSI API
+// ==============================================================================
+
+// Luas setiap piksel dalam hektare
+var pixelAreaHa = ee.Image.pixelArea()
+  .divide(10000)
+  .rename('Area_Ha');
+
+
+// Mengambil luas hanya pada piksel yang terdeteksi api
+var fireAreaHa = pixelAreaHa
+  .updateMask(fireMask);
+
+
+// ==============================================================================
+// 6. TOTAL LUAS AREA TERDETEKSI API
+// ==============================================================================
+
+var fireAreaStats = fireAreaHa.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: roi.geometry(),
+  scale: 1000,
+  maxPixels: 1e9,
+  bestEffort: true
+});
+
+
+// Total dalam hektare
+var totalFireHa = ee.Number(
+  fireAreaStats.get('Area_Ha')
+);
+
+
+// Konversi hektare → km²
+var totalFireKm2 = totalFireHa.divide(100);
+
+
+// Luas total Kalteng
+var roiAreaHa = ee.Image.pixelArea()
+  .divide(10000)
+  .reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: roi.geometry(),
+    scale: 1000,
+    maxPixels: 1e9,
+    bestEffort: true
+  })
+  .get('area');
+
+var totalKaltengHa = ee.Number(roiAreaHa);
+
+
+// Persentase wilayah Kalteng yang terdeteksi api
+var percentageFire = totalFireHa
+  .divide(totalKaltengHa)
+  .multiply(100);
+
+
+// ==============================================================================
+// 7. MENAMPILKAN HASIL LUAS DI CONSOLE
+// ==============================================================================
+
+
+print('HASIL ANALISIS KARHUTLA - AGUSTUS 2026');
+
+
+print(
+  'Total luas Kalteng (Ha):',
+  totalKaltengHa
+);
+
+print(
+  'Total area terdeteksi api (Ha):',
+  totalFireHa
+);
+
+print(
+  'Total area terdeteksi api (km²):',
+  totalFireKm2
+);
+
+print(
+  'Persentase wilayah Kalteng terdeteksi api (%):',
+  percentageFire
+);
+
+
+// ==============================================================================
+// SESI 3: ESTIMASI EMISI KARBON
+// ==============================================================================
+
+
+// 8. Faktor emisi
+//
+// Estimasi rata-rata emisi:
+// Hutan tropis ≈ 165 Ton CO2/Ha
+
+var emissionFactor = 165;
+
+
+// Menghitung emisi per piksel
+var carbonEmission = fireAreaHa
+  .multiply(emissionFactor)
+  .rename('Total_CO2_Ton');
+
+
+// ==============================================================================
+// 9. TOTAL ESTIMASI EMISI CO2
+// ==============================================================================
+
+var totalEmissionStats = carbonEmission.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: roi.geometry(),
+  scale: 1000,
+  maxPixels: 1e9,
+  bestEffort: true
+});
+
+
+// Mengambil total emisi
+var totalEmission = ee.Number(
+  totalEmissionStats.get('Total_CO2_Ton')
+);
+
+
+// Menampilkan hasil
+print(
+  'Total estimasi emisi CO2 (Ton):',
+  totalEmission
+);
